@@ -4,6 +4,7 @@ project(mass_tracker_project LANGUAGES CXX)
 
 add_executable(mass_tracker
     src/main.cpp
+    src/Storage.cpp
 )
 
 target_compile_features(mass_tracker PRIVATE cxx_std_20)
