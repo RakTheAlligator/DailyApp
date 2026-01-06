@@ -9,6 +9,10 @@ add_executable(mass_tracker
 
 target_compile_features(mass_tracker PRIVATE cxx_std_20)
 
+target_compile_definitions(mass_tracker PRIVATE
+    MASS_TRACKER_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+)
+
 target_include_directories(mass_tracker
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include

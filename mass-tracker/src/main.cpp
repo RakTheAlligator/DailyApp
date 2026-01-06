@@ -106,25 +106,17 @@ static void printHistory(const std::vector<WeightEntry>& rows) {
 }
 
 
-static std::filesystem::path computeCsvPath(const char* argv0) {
-    // argv0 -> .../build/bin/mass_tracker
-    std::filesystem::path exePath = std::filesystem::weakly_canonical(argv0);
-    auto binDir = exePath.parent_path();         // .../build/bin
-    auto buildDir = binDir.parent_path();        // .../build
-
-    // We want: .../DailyApp/mass-tracker/data/weights.csv
-    // buildDir is .../DailyApp/build
-    auto repoRoot = buildDir.parent_path();      // .../DailyApp
-
-    return repoRoot / "mass-tracker" / "data" / "weights.csv";
+static std::filesystem::path computeCsvPath() {
+    return std::filesystem::path(MASS_TRACKER_DATA_DIR) / "weights.csv";
 }
 
-int main([[maybe_unused]] int argc, char** argv) {
+int main([[maybe_unused]] int argc, char** argv) { 
+    
     std::cout << "Mass Tracker v0.1\n";
     std::cout << "-----------------\n";
 
-    const auto csvPath = computeCsvPath(argv[0]);
-    std::filesystem::create_directories(csvPath.parent_path());
+    const auto csvPath = computeCsvPath();                   
+    std::filesystem::create_directories(csvPath.parent_path()); 
 
     Storage storage(csvPath.string());
 
