@@ -3,4 +3,4 @@
 **/*.out
 **/.cache/
 **/.vscode/
-**/data/*.csv
+**/data/*

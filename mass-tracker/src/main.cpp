@@ -2,8 +2,13 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include <fstream>
+#include <cstdlib>
+#include <sstream>
+#include <cctype>
 
 #include "Storage.hpp"
+
 
 static std::string trim(const std::string& s) {
     const auto a = s.find_first_not_of(" \t\r\n");
@@ -110,8 +115,63 @@ static std::filesystem::path computeCsvPath() {
     return std::filesystem::path(MASS_TRACKER_DATA_DIR) / "weights.csv";
 }
 
-int main([[maybe_unused]] int argc, char** argv) { 
-    
+static void plotHistoryPng(const std::vector<WeightEntry>& rows) {
+    if (rows.size() < 2) return;
+
+    const auto dataDir = std::filesystem::path(MASS_TRACKER_DATA_DIR);
+    std::filesystem::create_directories(dataDir);
+
+    const std::filesystem::path outPng = dataDir / "weight_history.png";
+
+    const std::string tmpData   = "/tmp/mass_tracker_plot.dat";
+    const std::string tmpScript = "/tmp/mass_tracker_plot.gp";
+
+    {
+        std::ofstream out(tmpData);
+        if (!out) {
+            std::cerr << "Impossible d'ecrire " << tmpData << "\n";
+            return;
+        }
+        for (const auto& e : rows) {
+            out << e.date << " " << e.weightKg << "\n";
+        }
+    }
+
+    {
+        std::ofstream gp(tmpScript);
+        if (!gp) {
+            std::cerr << "Impossible d'ecrire " << tmpScript << "\n";
+            return;
+        }
+
+        gp << "set terminal pngcairo size 1200,650\n"
+              "set output \"" << outPng.string() << "\"\n"
+              "set title \"Historique du poids (kg)\"\n"
+              "set xlabel \"Date\"\n"
+              "set ylabel \"Poids (kg)\"\n"
+              "\n"
+              "set xdata time\n"
+              "set timefmt \"%Y-%m-%d\"\n"
+              "set format x \"%Y-%m-%d\"\n"
+              "set grid\n"
+              "set xtics rotate by -45\n"
+              "\n"
+              "plot \"" << tmpData << "\" using 1:2 with linespoints lw 2 pt 7 title \"Poids\"\n"
+              "set output\n";
+    }
+
+    const int ret = std::system(("gnuplot " + tmpScript + " >/dev/null 2>&1").c_str());
+    if (ret != 0) {
+        std::cerr << "Erreur: gnuplot a echoue\n";
+        return;
+    }
+
+    std::cout << "Graph genere: " << std::filesystem::absolute(outPng) << "\n";
+}
+
+
+int main() { 
+
     std::cout << "Mass Tracker v0.1\n";
     std::cout << "-----------------\n";
 
@@ -127,6 +187,7 @@ int main([[maybe_unused]] int argc, char** argv) {
 
     const auto rows = storage.loadAll();
     printHistory(rows);
+    plotHistoryPng(rows);
 
     return 0;
 }
