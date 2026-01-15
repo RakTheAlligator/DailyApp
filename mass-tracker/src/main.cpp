@@ -6,9 +6,13 @@
 #include <cstdlib>
 #include <sstream>
 #include <cctype>
+#include <unistd.h>
 
 #include "Storage.hpp"
 
+static bool stdinIsInteractive() {
+    return ::isatty(STDIN_FILENO);
+}
 
 static std::string trim(const std::string& s) {
     const auto a = s.find_first_not_of(" \t\r\n");
@@ -17,16 +21,21 @@ static std::string trim(const std::string& s) {
     return s.substr(a, b - a + 1);
 }
 
-static std::string askDate() {
+static std::string askDateOrEmpty() {
     while (true) {
-        std::cout << "Date (YYYY-MM-DD): ";
+        std::cout << "Date (YYYY-MM-DD) [Entrée = voir historique] : ";
         std::string d;
         std::getline(std::cin, d);
         d = trim(d);
+
+        if (d.empty()) return ""; // mode consultation
+
         if (d.size() == 10 && d[4] == '-' && d[7] == '-') return d;
+
         std::cout << "Format invalide. Exemple: 2026-01-05\n";
     }
 }
+
 static double kgToLb(double kg) { return kg * 2.20462262185; }
 static double lbToKg(double lb) { return lb / 2.20462262185; }
 
@@ -180,14 +189,31 @@ int main() {
 
     Storage storage(csvPath.string());
 
-    const std::string date = askDate();
-    const double weight = askWeightKg();
+    if (!stdinIsInteractive()) {
+        const auto rows = storage.loadAll();
+        printHistory(rows);
+        plotHistoryPng(rows);
+        return 0;
+    }
+    
+    const std::string date = askDateOrEmpty();
+    
+    if (date.empty()) {
+        // Mode consultation: pas d'ajout
+        const auto rows = storage.loadAll();
+        printHistory(rows);
+        plotHistoryPng(rows); // génère le PNG et affiche le chemin
+        return 0;
+    }
 
+    // Mode ajout
+    const double weight = askWeightKg();
     storage.append(WeightEntry{date, weight});
 
     const auto rows = storage.loadAll();
     printHistory(rows);
     plotHistoryPng(rows);
+
 
     return 0;
 }
