@@ -124,54 +124,52 @@ static std::filesystem::path computeCsvPath() {
     return std::filesystem::path(MASS_TRACKER_DATA_DIR) / "weights.csv";
 }
 
+static std::string shellQuote(const std::string& s) {
+    std::string out = "'";
+    for (char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out += c;
+    }
+    out += "'";
+    return out;
+}
+
 static void plotHistoryPng(const std::vector<WeightEntry>& rows) {
     if (rows.size() < 2) return;
 
     const auto dataDir = std::filesystem::path(MASS_TRACKER_DATA_DIR);
     std::filesystem::create_directories(dataDir);
 
-    const std::filesystem::path outPng = dataDir / "weight_history.png";
+    const auto csvPath = (dataDir / "weights.csv").string();
+    const auto outPng  = (dataDir / "weight_history.png").string();
 
-    const std::string tmpData   = "/tmp/mass_tracker_plot.dat";
-    const std::string tmpScript = "/tmp/mass_tracker_plot.gp";
+    // Repo root: MASS_TRACKER_DATA_DIR = .../mass-tracker/data
+    // parent_path() -> .../mass-tracker
+    // parent_path() -> .../DailyApp
+    const auto repoRoot = dataDir.parent_path().parent_path();
 
-    {
-        std::ofstream out(tmpData);
-        if (!out) {
-            std::cerr << "Impossible d'ecrire " << tmpData << "\n";
-            return;
-        }
-        for (const auto& e : rows) {
-            out << e.date << " " << e.weightKg << "\n";
-        }
-    }
+    const auto scriptPath = (repoRoot / "mass-tracker" / "analytics" / "plot_weights.py");
 
-    {
-        std::ofstream gp(tmpScript);
-        if (!gp) {
-            std::cerr << "Impossible d'ecrire " << tmpScript << "\n";
-            return;
-        }
+    // Utiliser python du venv si dispo, sinon python3
+    const auto venvPython = (repoRoot / ".venv" / "bin" / "python");
+    const std::string pythonExe = std::filesystem::exists(venvPython)
+        ? venvPython.string()
+        : "python3";
 
-        gp << "set terminal pngcairo size 1200,650\n"
-              "set output \"" << outPng.string() << "\"\n"
-              "set title \"Historique du poids (kg)\"\n"
-              "set xlabel \"Date\"\n"
-              "set ylabel \"Poids (kg)\"\n"
-              "\n"
-              "set xdata time\n"
-              "set timefmt \"%Y-%m-%d\"\n"
-              "set format x \"%Y-%m-%d\"\n"
-              "set grid\n"
-              "set xtics rotate by -45\n"
-              "\n"
-              "plot \"" << tmpData << "\" using 1:2 with linespoints lw 2 pt 7 title \"Poids\"\n"
-              "set output\n";
-    }
+    std::string cmd;
+    cmd += shellQuote(pythonExe);
+    cmd += " ";
+    cmd += shellQuote(scriptPath.string());
+    cmd += " --csv ";
+    cmd += shellQuote(csvPath);
+    cmd += " --out ";
+    cmd += shellQuote(outPng);
+    cmd += " >/dev/null 2>&1";
 
-    const int ret = std::system(("gnuplot " + tmpScript + " >/dev/null 2>&1").c_str());
+    const int ret = std::system(cmd.c_str());
     if (ret != 0) {
-        std::cerr << "Erreur: gnuplot a echoue\n";
+        std::cerr << "Erreur: plot python a echoue (code " << ret << ")\n";
+        std::cerr << "Commande: " << cmd << "\n";
         return;
     }
 
