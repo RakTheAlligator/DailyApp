@@ -16,13 +16,13 @@ static void ensure_headers(const std::string& products,
                            const std::string& batches,
                            const std::string& extras) {
     if (!file_exists(products)) {
-    append_line(products, "id,name,unit,kcal_per_100,prot_per_100,aliases");
+    append_line(products, "id,name,unit,kcal_per_100,prot_per_100,fiber_per_100,aliases");
     }
     if (!file_exists(batches)) {
     append_line(batches, "batch_id,start_date,days,product_id,qty,unit,comment");
     }
     if (!file_exists(extras)) {
-    append_line(extras, "date,kcal,prot,comment");
+    append_line(extras, "date,kcal,prot,fiber,comment");
     }
 }
 static double round2(double x) {
@@ -190,7 +190,7 @@ int main(int argc, char** argv) {
             << "  ./food_tracker add-product\n"
             << "  ./food_tracker sim-batch <start YYYY-MM-DD> <days> <product> <qty><unit> [comment]\n"
             << "  ./food_tracker add-batch <start YYYY-MM-DD> <days> <product> <qty><unit> [comment]\n"
-            << "  ./food_tracker add-extra <date YYYY-MM-DD> <kcal> <protg>[comment]\n"
+            << "  ./food_tracker add-extra <date YYYY-MM-DD> <kcal> <protg> <fiber> [comment]\n"
             << "  ./food_tracker history\n"
 
             << "\nDraft (multi-items):\n"
@@ -219,6 +219,8 @@ int main(int argc, char** argv) {
                     << std::setw(8)  << p.kcal_per_100
                     << std::setw(12) << ("kcal/100" + to_string(p.unit))
                     << std::setw(8)  << p.prot_per_100
+                    << ("g/100" + to_string(p.unit))
+                    << std::setw(8)  << p.fiber_per_100
                     << ("g/100" + to_string(p.unit))
                     << "\n";
         }
@@ -251,8 +253,8 @@ int main(int argc, char** argv) {
         double kcal = std::stod(argv[3]);
         std::string comment = (argc >= 5) ? join_rest_args(argc, argv, 4) : "";
 
-        // extras.csv: date,kcal,prot,comment  (prot=0 pour l’instant)
-        append_line(EXTRAS, format_date(d) + "," + std::to_string(kcal) + ",0," + comment);
+        // extras.csv: date,kcal,prot,fiber,comment  (prot=0 pour l’instant)
+        append_line(EXTRAS, format_date(d) + "," + std::to_string(kcal) + ",0,0," + comment);
 
         std::cout << "✔ extra ajouté\n";
         return 0;
@@ -285,6 +287,7 @@ int main(int argc, char** argv) {
 
     double total_week = 0.0;
     double prot_week = 0.0;
+    double fiber_week = 0.0;
 
     std::cout << "Draft: " << format_date(meta.start) << " sur " << meta.days << " jours\n";
     for (const auto& it : items) {
@@ -295,18 +298,22 @@ int main(int argc, char** argv) {
         }
         double kcal_total = it.qty * p->kcal_per_100 / 100.0;
         double prot_total = it.qty * p->prot_per_100 / 100.0;
+        double fiber_total = it.qty * p->fiber_per_100 / 100.0;
 
         total_week += kcal_total;
         prot_week += prot_total;
+        fiber_week += fiber_total;
 
         std::cout << "  " << p->id << " (" << p->name << "): "
                     << kcal_total << " kcal total  -> "
                     << (kcal_total / (double)meta.days) << " kcal/j ; "
                     << prot_total << " prot total  -> "
-                    << (prot_total / (double)meta.days) << " g prot/j\n";
+                    << (prot_total / (double)meta.days) << " g prot/j ; "
+                    << fiber_total << " fiber total  -> "
+                    << (fiber_total / (double)meta.days) << " g fiber/j\n";
     }
-    std::cout << "Total draft: " << total_week << " kcal ; " << prot_week << " g prot\n";
-    std::cout << "Moyenne: " << (total_week / (double)meta.days) << " kcal/j ; " << (prot_week / (double)meta.days) << " g prot/j\n";
+    std::cout << "Total draft: " << total_week << " kcal ; " << prot_week << " g prot ; " << fiber_week << " g fiber\n";
+    std::cout << "Moyenne: " << (total_week / (double)meta.days) << " kcal/j ; " << (prot_week / (double)meta.days) << " g prot/j ; " << (fiber_week / (double)meta.days) << " g fiber/j\n";
     return 0;
     }
 
@@ -402,7 +409,7 @@ int main(int argc, char** argv) {
         }
 
         // 2) Compute daily kcal/prot over whole range
-        auto per = compute_daily_kcal_and_prot(db, BATCHES, EXTRAS, range.min, days);
+        auto per = compute_daily_kcal_and_prot_and_fiber(db, BATCHES, EXTRAS, range.min, days);
 
         // 3) Write/overwrite history_food.csv
         const auto HISTORY_CSV = (dataDir() / "history_food.csv").string();
@@ -411,12 +418,11 @@ int main(int argc, char** argv) {
             std::cerr << "Cannot write: " << HISTORY_CSV << "\n";
             return 1;
         }
-        out << "date,kcal,protein\n";
-
+        out << "date,kcal,protein,fiber\n";
         // 4) Print grouped consecutive ranges with identical values
         bool started = false;
         std::string grp_start, grp_end;
-        double grp_kcal = 0.0, grp_prot = 0.0;
+        double grp_kcal = 0.0, grp_prot = 0.0, grp_fiber = 0.0;
 
         auto flush_group = [&]() {
             if (!started) return;
@@ -428,27 +434,28 @@ int main(int argc, char** argv) {
 
             if (grp_start == grp_end) {
                 std::cout << grp_start << " : " << round2(grp_kcal)
-                        << " kcal | " << round2(grp_prot) << " g prot\n";
+                        << " kcal | " << round2(grp_prot) << " g prot | " << round2(grp_fiber) << " g fiber\n";
             } else {
                 std::cout << grp_start << " -> " << grp_end << " : " << round2(grp_kcal)
-                        << " kcal | " << round2(grp_prot) << " g prot\n";
+                        << " kcal | " << round2(grp_prot) << " g prot | " << round2(grp_fiber) << " g fiber\n";
             }
         };
 
 
         bool have_prev = false;
         Date prev{};
-        double total_kcal = 0.0, total_prot = 0.0;
+        double total_kcal = 0.0, total_prot = 0.0, total_fiber = 0.0;
 
         // per.kcal is assumed to be ordered (std::map). If not, tell me and we sort.
         for (const auto& [date_str, kcal] : per.kcal) {
             double prot = per.prot[date_str];
-
+            double fiber = per.fiber[date_str];
             // CSV
-            out << date_str << "," << kcal << "," << prot << "\n";
+            out << date_str << "," << kcal << "," << prot << "," << fiber << "\n";
 
             total_kcal += kcal;
             total_prot += prot;
+            total_fiber += fiber;
 
             // grouping logic
             Date cur{};
@@ -465,14 +472,17 @@ int main(int argc, char** argv) {
                 grp_start = grp_end = date_str;
                 grp_kcal = kcal;
                 grp_prot = prot;
+                grp_fiber = fiber;
+
             } else {
-                if (consecutive && same_val(kcal, grp_kcal) && same_val(prot, grp_prot)) {
+                if (consecutive && same_val(kcal, grp_kcal) && same_val(prot, grp_prot) && same_val(fiber, grp_fiber)) {
                     grp_end = date_str;
                 } else {
                     flush_group();
                     grp_start = grp_end = date_str;
                     grp_kcal = kcal;
                     grp_prot = prot;
+                    grp_fiber = fiber;
                 }
             }
 
@@ -482,10 +492,6 @@ int main(int argc, char** argv) {
 
         out.close();
         flush_group();
-
-        std::cout << "Total: " << round2(total_kcal) << " kcal | " << round2(total_prot) << " g prot\n";
-        std::cout << "Average: " << round2(total_kcal / (double)days) << " kcal/day | "
-                << round2(total_prot / (double)days) << " g prot/day\n";
 
         // 5) Plot entire history from history_food.csv
         const auto foodDir = dataDir().parent_path(); // .../food-tracker

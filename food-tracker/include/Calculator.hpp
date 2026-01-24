@@ -8,9 +8,10 @@ struct ProductDB;
 struct DayMacros {
   std::map<std::string, double> kcal;
   std::map<std::string, double> prot;
+  std::map<std::string, double> fiber;
 };
 
-DayMacros compute_daily_kcal_and_prot(
+DayMacros compute_daily_kcal_and_prot_and_fiber(
   const ProductDB& db,
   const std::string& batches_csv,
   const std::string& extras_csv,
