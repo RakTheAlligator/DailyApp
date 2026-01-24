@@ -34,9 +34,29 @@ std::vector<std::string> read_lines(const std::string& path) {
 }
 
 void append_line(const std::string& path, const std::string& line) {
-  std::ofstream f(path, std::ios::app);
-  f << line << "\n";
+  // Assure que le dossier parent existe (utile si path = ".../data/batches.csv")
+  const auto parent = std::filesystem::path(path).parent_path();
+  if (!parent.empty()) std::filesystem::create_directories(parent);
+
+  bool need_leading_newline = false;
+
+  if (std::filesystem::exists(path)) {
+    std::ifstream in(path, std::ios::binary);
+    in.seekg(0, std::ios::end);
+    const auto size = in.tellg();
+    if (size > 0) {
+      in.seekg(-1, std::ios::end);
+      char last = '\0';
+      in.get(last);
+      if (last != '\n') need_leading_newline = true;
+    }
+  }
+
+  std::ofstream out(path, std::ios::app | std::ios::binary);
+  if (need_leading_newline) out << "\n";
+  out << line << "\n";
 }
+
 
 bool file_exists(const std::string& path) {
   return std::filesystem::exists(path);
