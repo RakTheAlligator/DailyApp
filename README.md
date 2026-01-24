@@ -32,21 +32,20 @@ data handling, and numerical reasoning.
 
 ## Repository Architecture
 
-DailyApp/
-├── food-tracker/ # Food intake tracking (C++)
-│ ├── include/ # Domain models & business logic
-│ ├── src/ # Implementations
-│ └── CMakeLists.txt
-│
-├── mass-tracker/ # Body weight tracking (C++)
-│ ├── include/ # Data structures & storage
-│ ├── src/
-│ ├── analytics/ # Python visualization scripts
-│ └── CMakeLists.txt
-│
-├── CMakeLists.txt # Top-level build configuration
-└── README.md
-
+    DailyApp/
+    ├── food-tracker/        # Food intake tracking (C++)
+    │   ├── include/         # Domain models & business logic
+    │   ├── src/             # Implementations
+    │   └── CMakeLists.txt
+    │
+    ├── mass-tracker/        # Body weight tracking (C++)
+    │   ├── include/         # Data structures & storage
+    │   ├── src/
+    │   ├── analytics/       # Python visualization scripts
+    │   └── CMakeLists.txt
+    │
+    ├── CMakeLists.txt       # Top-level build configuration
+    └── README.md
 
 The repository layout is intentional and reflects a clear separation of responsibilities:
 
