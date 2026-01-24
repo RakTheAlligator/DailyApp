@@ -5,8 +5,12 @@
 
 struct ProductDB;
 
-// retourne kcal_total par jour sur l’intervalle [start, start+days-1]
-std::map<std::string, double> compute_daily_kcal(
+struct DayMacros {
+  std::map<std::string, double> kcal;
+  std::map<std::string, double> prot;
+};
+
+DayMacros compute_daily_kcal_and_prot(
   const ProductDB& db,
   const std::string& batches_csv,
   const std::string& extras_csv,

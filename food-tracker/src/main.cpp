@@ -12,13 +12,13 @@ static void ensure_headers(const std::string& products,
                            const std::string& batches,
                            const std::string& extras) {
     if (!file_exists(products)) {
-    append_line(products, "id,name,unit,kcal_per_100,aliases");
+    append_line(products, "id,name,unit,kcal_per_100,prot_per_100,aliases");
     }
     if (!file_exists(batches)) {
     append_line(batches, "batch_id,start_date,days,product_id,qty,unit,comment");
     }
     if (!file_exists(extras)) {
-    append_line(extras, "date,kcal,comment");
+    append_line(extras, "date,kcal,prot,comment");
     }
 }
 
@@ -123,7 +123,7 @@ int main(int argc, char** argv) {
             << "  ./food_tracker add-product\n"
             << "  ./food_tracker sim-batch <start YYYY-MM-DD> <days> <product> <qty><unit> [comment]\n"
             << "  ./food_tracker add-batch <start YYYY-MM-DD> <days> <product> <qty><unit> [comment]\n"
-            << "  ./food_tracker add-extra <date YYYY-MM-DD> <kcal> [comment]\n"
+            << "  ./food_tracker add-extra <date YYYY-MM-DD> <kcal> <protg>[comment]\n"
             << "  ./food_tracker summary <start YYYY-MM-DD> <days>\n"
             << "\nDraft (multi-items):\n"
             << "  ./food_tracker draft-new <start YYYY-MM-DD> <days>\n"
@@ -145,10 +145,16 @@ int main(int argc, char** argv) {
                     });
 
         for (const auto& p : products) {
-            std::cout << std::left << std::setw(14) << p.id
+            std::cout << std::left
+                    << std::setw(14) << p.id
                     << std::setw(22) << p.name
-                    << p.kcal_per_100 << " kcal/100" << to_string(p.unit) << "\n";
+                    << std::setw(8)  << p.kcal_per_100
+                    << std::setw(12) << ("kcal/100" + to_string(p.unit))
+                    << std::setw(8)  << p.prot_per_100
+                    << ("g/100" + to_string(p.unit))
+                    << "\n";
         }
+
         return 0;
     }
 
@@ -170,15 +176,20 @@ int main(int argc, char** argv) {
     }
 
     if (cmd == "add-extra") {
-    if (argc < 4) { std::cerr << "add-extra <date> <kcal> [comment]\n"; return 1; }
-    Date d{};
-    if (!parse_date_yyyy_mm_dd(argv[2], d)) { std::cerr << "Bad date\n"; return 1; }
-    double kcal = std::stod(argv[3]);
-    std::string comment = (argc >= 5) ? join_rest_args(argc, argv, 4) : "";
-    append_line(EXTRAS, format_date(d) + "," + std::to_string(kcal) + "," + comment);
-    std::cout << "✔ extra ajouté\n";
-    return 0;
+        if (argc < 4) { std::cerr << "add-extra <date> <kcal> [comment]\n"; return 1; }
+        Date d{};
+        if (!parse_date_yyyy_mm_dd(argv[2], d)) { std::cerr << "Bad date\n"; return 1; }
+
+        double kcal = std::stod(argv[3]);
+        std::string comment = (argc >= 5) ? join_rest_args(argc, argv, 4) : "";
+
+        // extras.csv: date,kcal,prot,comment  (prot=0 pour l’instant)
+        append_line(EXTRAS, format_date(d) + "," + std::to_string(kcal) + ",0," + comment);
+
+        std::cout << "✔ extra ajouté\n";
+        return 0;
     }
+
     if (cmd == "draft-add") {
     if (!draft_exists()) { std::cerr << "Aucun draft. Fais: draft-new <start> <days>\n"; return 1; }
     if (argc < 4) { std::cerr << "draft-add <product> <qty><unit> [comment]\n"; return 1; }
@@ -205,6 +216,8 @@ int main(int argc, char** argv) {
     if (items.empty()) { std::cout << "Draft vide (aucun item).\n"; return 0; }
 
     double total_week = 0.0;
+    double prot_week = 0.0;
+
     std::cout << "Draft: " << format_date(meta.start) << " sur " << meta.days << " jours\n";
     for (const auto& it : items) {
         auto p = db.get_by_id(it.pid);
@@ -213,13 +226,19 @@ int main(int argc, char** argv) {
             continue;
         }
         double kcal_total = it.qty * p->kcal_per_100 / 100.0;
+        double prot_total = it.qty * p->prot_per_100 / 100.0;
+
         total_week += kcal_total;
+        prot_week += prot_total;
+
         std::cout << "  " << p->id << " (" << p->name << "): "
                     << kcal_total << " kcal total  -> "
-                    << (kcal_total / (double)meta.days) << " kcal/j\n";
+                    << (kcal_total / (double)meta.days) << " kcal/j ; "
+                    << prot_total << " prot total  -> "
+                    << (prot_total / (double)meta.days) << " g prot/j\n";
     }
-    std::cout << "Total draft: " << total_week << " kcal\n";
-    std::cout << "Moyenne: " << (total_week / (double)meta.days) << " kcal/j\n";
+    std::cout << "Total draft: " << total_week << " kcal ; " << prot_week << " g prot\n";
+    std::cout << "Moyenne: " << (total_week / (double)meta.days) << " kcal/j ; " << (prot_week / (double)meta.days) << " g prot/j\n";
     return 0;
     }
 
@@ -306,14 +325,21 @@ int main(int argc, char** argv) {
     if (!parse_date_yyyy_mm_dd(argv[2], start)) { std::cerr << "Bad date\n"; return 1; }
     int days = std::stoi(argv[3]);
 
-    auto per_day = compute_daily_kcal(db, BATCHES, EXTRAS, start, days);
-    double total = 0.0;
-    for (const auto& [date, kcal] : per_day) {
-        std::cout << date << " : " << kcal << " kcal\n";
-        total += kcal;
+    auto per = compute_daily_kcal_and_prot(db, BATCHES, EXTRAS, start, days);
+
+    double total_kcal = 0.0;
+    double total_prot = 0.0;
+
+    for (const auto& [date, kcal] : per.kcal) {
+    double prot = per.prot[date];
+    std::cout << date << " : " << kcal << " kcal | " << prot << " g prot\n";
+    total_kcal += kcal;
+    total_prot += prot;
     }
-    std::cout << "Total: " << total << " kcal\n";
-    std::cout << "Moyenne: " << (total / (double)days) << " kcal/jour\n";
+
+    std::cout << "Total: " << total_kcal << " kcal | " << total_prot << " g prot\n";
+    std::cout << "Moyenne: " << (total_kcal / days) << " kcal/j | " << (total_prot / days) << " g prot/j\n";
+
     return 0;
     }
 

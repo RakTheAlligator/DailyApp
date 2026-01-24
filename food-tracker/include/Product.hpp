@@ -12,5 +12,6 @@ struct Product {
   std::string name;
   Unit unit{};
   double kcal_per_100 = 0.0;   // kcal / 100g ou kcal / 100mL
+  double prot_per_100 = 0.0;
   std::string aliases_raw;     // "pain|mie|toast"
 };

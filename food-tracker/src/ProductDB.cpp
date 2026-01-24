@@ -29,14 +29,15 @@ bool ProductDB::load(const std::string& path) {
   // skip header
   for (size_t i = 1; i < lines.size(); ++i) {
     auto cols = split_csv_simple(lines[i]);
-    if (cols.size() < 4) continue;
+    if (cols.size() < 5) continue;
 
     Product p;
     p.id = cols[0];
     p.name = cols[1];
     p.unit = parse_unit(cols[2]);
     p.kcal_per_100 = std::stod(cols[3]);
-    if (cols.size() >= 5) p.aliases_raw = cols[4];
+    p.prot_per_100 = std::stod(cols[4]);
+    if (cols.size() >= 6) p.aliases_raw = cols[5];
 
     size_t idx = products.size();
     products.push_back(p);
@@ -110,13 +111,18 @@ bool ProductDB::add_interactive(const std::string& path) {
   std::getline(std::cin, kcal);
   p.kcal_per_100 = std::stod(trim(kcal));
 
+  std::string prot;
+  std::cout << "prot_per_100 (ex: 10): ";
+  std::getline(std::cin, prot);
+  p.prot_per_100 = std::stod(trim(prot));
+
   std::cout << "aliases (optionnel, séparés par |): ";
   std::getline(std::cin, p.aliases_raw);
   p.aliases_raw = trim(p.aliases_raw);
 
   // append
   append_line(path,
-    p.id + "," + p.name + "," + to_string(p.unit) + "," + std::to_string(p.kcal_per_100) + "," + p.aliases_raw
+    p.id + "," + p.name + "," + to_string(p.unit) + "," + std::to_string(p.kcal_per_100) + "," + std::to_string(p.prot_per_100) + "," + p.aliases_raw
   );
   return true;
 }
