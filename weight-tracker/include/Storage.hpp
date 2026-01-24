@@ -13,8 +13,16 @@ public:
     // Append a new entry (adds header if file is new)
     void append(const WeightEntry& e) const;
 
+    // Replace entry if date exists; otherwise insert; keeps CSV sorted by date
+    // Returns true if replaced, false if inserted
+    bool upsertByDate(const WeightEntry& e) const;
+
+    // Remove entry for a given date; returns true if removed
+    bool removeByDate(const std::string& date) const;
+
 private:
     std::string path_;
 
     void ensureHeaderIfNeeded() const;
+    void rewriteAll(const std::vector<WeightEntry>& rows) const;
 };

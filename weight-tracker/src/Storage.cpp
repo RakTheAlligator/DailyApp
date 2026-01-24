@@ -1,4 +1,5 @@
 #include "Storage.hpp"
+#include <filesystem>
 
 #include <algorithm>
 #include <fstream>
@@ -64,4 +65,47 @@ void Storage::append(const WeightEntry& e) const {
 
     std::ofstream out(path_, std::ios::app);
     out << e.date << "," << e.weightKg << "\n";
+}
+void Storage::rewriteAll(const std::vector<WeightEntry>& rows) const {
+    std::filesystem::create_directories(std::filesystem::path(path_).parent_path());
+
+    std::ofstream out(path_, std::ios::trunc);
+    out << "date,weight_kg\n";
+    for (const auto& e : rows) {
+        out << e.date << "," << e.weightKg << "\n";
+    }
+}
+
+bool Storage::upsertByDate(const WeightEntry& e) const {
+    auto rows = loadAll();
+
+    bool replaced = false;
+    for (auto& r : rows) {
+        if (r.date == e.date) {
+            r.weightKg = e.weightKg;
+            replaced = true;
+            break;
+        }
+    }
+    if (!replaced) rows.push_back(e);
+
+    std::sort(rows.begin(), rows.end(),
+              [](const WeightEntry& a, const WeightEntry& b) { return a.date < b.date; });
+
+    rewriteAll(rows);
+    return replaced;
+}
+
+bool Storage::removeByDate(const std::string& date) const {
+    auto rows = loadAll();
+    const auto before = rows.size();
+
+    rows.erase(std::remove_if(rows.begin(), rows.end(),
+                             [&](const WeightEntry& e) { return e.date == date; }),
+               rows.end());
+
+    if (rows.size() == before) return false;
+
+    rewriteAll(rows);
+    return true;
 }
