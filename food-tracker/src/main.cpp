@@ -6,7 +6,11 @@
 #include <iomanip>
 #include <filesystem>
 #include <algorithm>
-
+#include <fstream>
+#include <cstdlib>
+#include <unistd.h>   // readlink
+#include <limits.h>   // PATH_MAX
+#include <cmath>
 
 static void ensure_headers(const std::string& products,
                            const std::string& batches,
@@ -21,6 +25,69 @@ static void ensure_headers(const std::string& products,
     append_line(extras, "date,kcal,prot,comment");
     }
 }
+static double round2(double x) {
+    return std::round(x * 100.0) / 100.0;
+}
+static bool same_val(double a, double b) {
+    return std::abs(round2(a) - round2(b)) < 1e-9;
+}
+
+struct DateRange { Date min{}; Date max{}; bool ok=false; };
+
+static DateRange compute_available_range(const std::string& batches_csv,
+                                         const std::string& extras_csv) {
+    DateRange r{};
+    bool have = false;
+    Date minD{}, maxD{};
+
+    // batches.csv: batch_id,start_date,days,product_id,qty,unit,comment
+    if (file_exists(batches_csv)) {
+        auto lines = read_lines(batches_csv);
+        for (size_t i = 1; i < lines.size(); ++i) {
+            auto c = split_csv_simple(lines[i]);
+            if (c.size() < 3) continue;
+
+            Date start{};
+            if (!parse_date_yyyy_mm_dd(c[1], start)) continue;
+
+            int days = 0;
+            try { days = std::stoi(c[2]); } catch (...) { continue; }
+            if (days <= 0) continue;
+
+            Date end = add_days(start, days - 1);
+
+            if (!have) { minD = start; maxD = end; have = true; }
+            else {
+                if (start < minD) minD = start;
+                if (maxD < end)   maxD = end;
+            }
+        }
+    }
+
+    // extras.csv: date,kcal,prot,comment
+    if (file_exists(extras_csv)) {
+        auto lines = read_lines(extras_csv);
+        for (size_t i = 1; i < lines.size(); ++i) {
+            auto c = split_csv_simple(lines[i]);
+            if (c.size() < 1) continue;
+
+            Date d{};
+            if (!parse_date_yyyy_mm_dd(c[0], d)) continue;
+
+            if (!have) { minD = d; maxD = d; have = true; }
+            else {
+                if (d < minD) minD = d;
+                if (maxD < d) maxD = d;
+            }
+        }
+    }
+
+    r.ok = have;
+    r.min = minD;
+    r.max = maxD;
+    return r;
+}
+
 
 static bool parse_qty_unit(const std::string& s, double& qty, std::string& unit) {
     // ex: "700g" ou "250ml"
@@ -124,7 +191,8 @@ int main(int argc, char** argv) {
             << "  ./food_tracker sim-batch <start YYYY-MM-DD> <days> <product> <qty><unit> [comment]\n"
             << "  ./food_tracker add-batch <start YYYY-MM-DD> <days> <product> <qty><unit> [comment]\n"
             << "  ./food_tracker add-extra <date YYYY-MM-DD> <kcal> <protg>[comment]\n"
-            << "  ./food_tracker summary <start YYYY-MM-DD> <days>\n"
+            << "  ./food_tracker history\n"
+
             << "\nDraft (multi-items):\n"
             << "  ./food_tracker draft-new <start YYYY-MM-DD> <days>\n"
             << "  ./food_tracker draft-add <product> <qty><unit> [comment]\n"
@@ -319,30 +387,129 @@ int main(int argc, char** argv) {
     if (cmd == "sim-batch") return do_batch(false);
     if (cmd == "add-batch") return do_batch(true);
 
-    if (cmd == "summary") {
-    if (argc < 4) { std::cerr << "summary <start> <days>\n"; return 1; }
-    Date start{};
-    if (!parse_date_yyyy_mm_dd(argv[2], start)) { std::cerr << "Bad date\n"; return 1; }
-    int days = std::stoi(argv[3]);
+    if (cmd == "history") {
+        // 1) Determine full available range (min..max)
+        auto range = compute_available_range(BATCHES, EXTRAS);
+        if (!range.ok) {
+            std::cerr << "No data found in batches.csv / extras.csv.\n";
+            return 1;
+        }
 
-    auto per = compute_daily_kcal_and_prot(db, BATCHES, EXTRAS, start, days);
+        int days = days_between_inclusive(range.min, range.max);
+        if (days <= 0) {
+            std::cerr << "Invalid computed date range.\n";
+            return 1;
+        }
 
-    double total_kcal = 0.0;
-    double total_prot = 0.0;
+        // 2) Compute daily kcal/prot over whole range
+        auto per = compute_daily_kcal_and_prot(db, BATCHES, EXTRAS, range.min, days);
 
-    for (const auto& [date, kcal] : per.kcal) {
-    double prot = per.prot[date];
-    std::cout << date << " : " << kcal << " kcal | " << prot << " g prot\n";
-    total_kcal += kcal;
-    total_prot += prot;
+        // 3) Write/overwrite history_food.csv
+        const auto HISTORY_CSV = (dataDir() / "history_food.csv").string();
+        std::ofstream out(HISTORY_CSV, std::ios::trunc);
+        if (!out) {
+            std::cerr << "Cannot write: " << HISTORY_CSV << "\n";
+            return 1;
+        }
+        out << "date,kcal,protein\n";
+
+        // 4) Print grouped consecutive ranges with identical values
+        bool started = false;
+        std::string grp_start, grp_end;
+        double grp_kcal = 0.0, grp_prot = 0.0;
+
+        auto flush_group = [&]() {
+            if (!started) return;
+
+            // Skip pure zero segments (after rounding)
+            if (same_val(grp_kcal, 0.0) && same_val(grp_prot, 0.0)) {
+                return;
+            }
+
+            if (grp_start == grp_end) {
+                std::cout << grp_start << " : " << round2(grp_kcal)
+                        << " kcal | " << round2(grp_prot) << " g prot\n";
+            } else {
+                std::cout << grp_start << " -> " << grp_end << " : " << round2(grp_kcal)
+                        << " kcal | " << round2(grp_prot) << " g prot\n";
+            }
+        };
+
+
+        bool have_prev = false;
+        Date prev{};
+        double total_kcal = 0.0, total_prot = 0.0;
+
+        // per.kcal is assumed to be ordered (std::map). If not, tell me and we sort.
+        for (const auto& [date_str, kcal] : per.kcal) {
+            double prot = per.prot[date_str];
+
+            // CSV
+            out << date_str << "," << kcal << "," << prot << "\n";
+
+            total_kcal += kcal;
+            total_prot += prot;
+
+            // grouping logic
+            Date cur{};
+            if (!parse_date_yyyy_mm_dd(date_str, cur)) continue;
+
+            bool consecutive = false;
+            if (have_prev) {
+                Date expected = add_days(prev, 1);
+                consecutive = (cur == expected);
+            }
+
+            if (!started) {
+                started = true;
+                grp_start = grp_end = date_str;
+                grp_kcal = kcal;
+                grp_prot = prot;
+            } else {
+                if (consecutive && same_val(kcal, grp_kcal) && same_val(prot, grp_prot)) {
+                    grp_end = date_str;
+                } else {
+                    flush_group();
+                    grp_start = grp_end = date_str;
+                    grp_kcal = kcal;
+                    grp_prot = prot;
+                }
+            }
+
+            prev = cur;
+            have_prev = true;
+        }
+
+        out.close();
+        flush_group();
+
+        std::cout << "Total: " << round2(total_kcal) << " kcal | " << round2(total_prot) << " g prot\n";
+        std::cout << "Average: " << round2(total_kcal / (double)days) << " kcal/day | "
+                << round2(total_prot / (double)days) << " g prot/day\n";
+
+        // 5) Plot entire history from history_food.csv
+        const auto foodDir = dataDir().parent_path(); // .../food-tracker
+        const auto script  = foodDir / "analytics" / "plot_nutrition.py";
+
+        if (!std::filesystem::exists(script)) {
+            std::cerr << "⚠ plot script not found: " << script << "\n";
+            return 0;
+        }
+
+        std::string cmdp =
+            "cd \"" + foodDir.string() + "\" && "
+            "python3 \"" + script.string() + "\"";
+
+        int rc = std::system(cmdp.c_str());
+        if (rc != 0) {
+            std::cerr << "⚠ plot failed (code " << rc << "). Install deps with:\n"
+                    << "  pip install -r " << (foodDir / "analytics" / "requirements.txt") << "\n";
+        } else {
+            std::cout << "✔ plot updated: " << (dataDir() / "history_food.png") << "\n";
+        }
+
+        return 0;
     }
-
-    std::cout << "Total: " << total_kcal << " kcal | " << total_prot << " g prot\n";
-    std::cout << "Moyenne: " << (total_kcal / days) << " kcal/j | " << (total_prot / days) << " g prot/j\n";
-
-    return 0;
-    }
-
     std::cerr << "Commande inconnue.\n";
     return 1;
 }
