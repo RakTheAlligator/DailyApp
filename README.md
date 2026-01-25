@@ -1,147 +1,139 @@
 # DailyApp
 
-![Language](https://img.shields.io/badge/language-C%2B%2B17-blue)
-![Analytics](https://img.shields.io/badge/analytics-Python-yellow)
-![Build](https://img.shields.io/badge/build-CMake-green)
-![Status](https://img.shields.io/badge/status-personal%20project-lightgrey)
+DailyApp is a small C++20 monorepo to track daily metrics (weight, food, etc.) with a single CLI entrypoint.
 
-**DailyApp** is a personal *quantified-self* project designed to track, process, and analyze
-everyday metrics such as food intake and body weight.
-
-The project deliberately separates:
-- **C++** for data modeling, business logic, and numerical correctness
-- **Python** for data analysis and visualization
-
-All data is stored in simple, explicit formats (CSV).  
-No proprietary tools, cloud services, or spreadsheets are required.
+The goals are:
+- one executable: DailyApp
+- centralized runtime data in DailyApp/data
+- optional Python analytics scripts
+- no external C++ dependencies (Linux / Ubuntu friendly)
 
 ---
 
-## Project Goals
+## Repository layout
 
-- Track personal metrics in a transparent and reproducible way
-- Keep full control over data formats and computations
-- Avoid black-box tools and opaque analytics
-- Build a modular foundation for future trackers
-  (finance, sport, sleep, etc.)
-
-This project is both a practical tool and a learning exercise in software architecture,
-data handling, and numerical reasoning.
-
----
-
-## Repository Architecture
-
-    DailyApp/
-    ├── food-tracker/        # Food intake tracking (C++)
-    │   ├── include/         # Domain models & business logic
-    │   ├── src/             # Implementations
-    │   └── CMakeLists.txt
-    │
-    ├── mass-tracker/        # Body weight tracking (C++)
-    │   ├── include/         # Data structures & storage
-    │   ├── src/
-    │   ├── analytics/       # Python visualization scripts
-    │   └── CMakeLists.txt
-    │
-    ├── CMakeLists.txt       # Top-level build configuration
-    └── README.md
-
-The repository layout is intentional and reflects a clear separation of responsibilities:
-
-- **Trackers** are independent modules
-- **C++** handles all data modeling and computations
-- **Python** is used strictly for post-processing and visualization
+DailyApp/
+CMakeLists.txt  
+dailyapp/              root CLI launcher (router)  
+weight-tracker/        weight tracker library + CLI  
+food-tracker/          food tracker library + CLI  
+analytics/             Python scripts for plots  
+data/                  runtime CSV / PNG files (ignored by git)
 
 ---
 
-## Food Tracker
+## Build (Ubuntu)
 
-The **food-tracker** is a command-line tool written in C++ that computes daily nutritional
-intake from structured CSV inputs.
+From the repository root:
 
-### Responsibilities
-- Manage a product database (kcal, protein content, units)
-- Track food consumption using *batches* spread over multiple days
-- Handle punctual extras (meals outside of batch planning)
-- Compute daily totals (energy, protein)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug  
+cmake --build build -j
 
-### Internal Design
+The binary is generated here:
 
-The implementation is split into clear, domain-oriented components:
-
-- **CSV parsing**  
-  Robust reading and writing of structured data files
-- **Date handling**  
-  Explicit date arithmetic and validation
-- **Product database**  
-  Centralized storage of nutritional information
-- **Calculation layer**  
-  All nutritional logic (distribution over days, aggregation)
-
-The food-tracker is intentionally **headless**:
-it produces reliable data but performs no visualization.
+build/bin/DailyApp
 
 ---
 
-## Mass Tracker
+## Usage
 
-The **mass-tracker** is a C++ command-line tool for tracking body weight over time.
+Global help:
 
-### Responsibilities
-- Record weight measurements
-- Store historical data persistently
-- Export data in CSV format
-- Enable downstream analysis
+./build/bin/DailyApp --help
 
-### Analytics
+### Weight tracker
 
-The `analytics/` directory contains Python scripts that:
-- load exported CSV data
-- generate plots and trends
-- perform no business logic
+./build/bin/DailyApp weight --help  
+./build/bin/DailyApp weight add 2026-01-24 62kg  
+./build/bin/DailyApp weight history  
+./build/bin/DailyApp weight remove 2026-01-24  
 
-This keeps the visualization layer simple and replaceable.
+### Food tracker
 
----
+./build/bin/DailyApp food --help  
+./build/bin/DailyApp food list  
 
-## Data & Analytics Philosophy
+Draft workflow:
 
-> **C++ produces the truth. Python visualizes it.**
+./build/bin/DailyApp food draft-new 2026-01-24 7  
+./build/bin/DailyApp food draft-add bread 675g "for the week"  
+./build/bin/DailyApp food draft-summary  
+./build/bin/DailyApp food draft-commit  
 
-- All numerical logic lives in C++
-- Python scripts only consume already-computed data
-- No duplication of business rules across languages
+History and plots:
 
-This design minimizes inconsistencies and makes debugging straightforward.
+./build/bin/DailyApp food history  
 
 ---
 
-## Build System
+## Data files
 
-The project uses **CMake** and requires a modern C++ compiler (C++17 or newer).
+All runtime files are stored under:
 
-- Each tracker can be built independently
-- A top-level `CMakeLists.txt` orchestrates the project
+DailyApp/data/
+
+Typical files:
+- weight_history.csv
+- weight_history.png
+- food_products.csv
+- food_batches.csv
+- food_extras.csv
+- food_history.csv
+- food_history.png
+- draft.csv
+
+Note: the data directory is ignored by git (personal data).
 
 ---
 
-## Planned Extensions
+## Analytics (Python)
 
-- Analytics for the food-tracker (daily kcal / protein plots)
-- Standardized data directories and formats
-- Additional trackers (finance, sport, sleep, etc.)
-- Cross-tracker aggregation and summaries
+Some commands generate plots using Python scripts:
+
+analytics/weight_history.py  
+analytics/food_history.py  
+
+Optional Python environment:
+
+python3 -m venv .venv  
+source .venv/bin/activate  
+pip install -r analytics/requirements.txt  
+
+Running:
+
+./build/bin/DailyApp weight history  
+./build/bin/DailyApp food history  
+
+will also generate PNG plots in DailyApp/data.
 
 ---
 
-## Notes
+## Debugging (VS Code)
 
-This repository is a personal project focused on:
-- architectural clarity
-- explicit data handling
-- long-term maintainability
+Only one target needs to be debugged: DailyApp.
 
-It is not intended to be a polished end-user product, but a controlled and extensible
-technical foundation.
+The launcher routes all commands to the trackers, so you never need to switch
+debug targets for food or weight.
 
+---
+
+## Adding a new tracker
+
+Example: money tracker
+
+1. Create money-tracker/ with:
+   - include/MoneyCli.hpp exposing:
+     int money::run(std::span<const std::string_view> args);
+   - src/MoneyCli.cpp implementing the CLI
+   - CMakeLists.txt building money_tracker_lib
+
+2. Link it in dailyapp/CMakeLists.txt:
+   target_link_libraries(DailyApp PRIVATE money_tracker_lib)
+
+3. Add routing logic in dailyapp/src/main.cpp.
+
+---
+
+## License
+
+Personal project. Use at your own risk.
