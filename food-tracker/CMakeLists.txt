@@ -13,7 +13,8 @@ add_executable(food_tracker
 target_compile_features(food_tracker PRIVATE cxx_std_20)
 
 target_compile_definitions(food_tracker PRIVATE
-    FOOD_TRACKER_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    FOOD_TRACKER_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
+    DAILYAPP_ROOT_DIR="${CMAKE_SOURCE_DIR}"
 )
 
 target_include_directories(food_tracker

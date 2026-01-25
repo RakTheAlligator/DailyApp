@@ -1,16 +1,28 @@
-import pandas as pd
-import matplotlib.pyplot as plt
+import argparse
 from pathlib import Path
 
-CSV = Path("data/history_food.csv")
-OUT = Path("data/history_food.png")
+import pandas as pd
+import matplotlib.pyplot as plt
 
 def main():
-    if not CSV.exists():
-        raise SystemExit(f"Missing {CSV}. Run ./food_tracker history first.")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--csv", required=True, help="Path to food_history.csv")
+    ap.add_argument("--out", required=True, help="Path to output PNG")
+    args = ap.parse_args()
 
-    df = pd.read_csv(CSV, parse_dates=["date"]).sort_values("date")
+    csv_path = Path(args.csv)
+    out_path = Path(args.out)
 
+    if not csv_path.exists():
+        raise SystemExit(f"CSV not found: {csv_path}")
+
+    df = pd.read_csv(csv_path)
+    if df.empty:
+        raise SystemExit("CSV is empty, nothing to plot.")
+    
+    df["date"] = pd.to_datetime(df["date"], format="%Y-%m-%d", errors="raise")
+    df = df.sort_values("date")
+    
     # --- Support optional columns
     has_fiber = "fiber" in df.columns
 
@@ -76,10 +88,10 @@ def main():
 
     plt.title("Food history: daily intake (zeros skipped)")
     plt.tight_layout()
-    plt.savefig(OUT, dpi=150)
+    plt.savefig(out_path, dpi=150)
     plt.close()
 
-    print(f"Wrote {OUT}")
+    print(f"Wrote {out_path}")
 
 if __name__ == "__main__":
     main()

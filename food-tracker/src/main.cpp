@@ -11,6 +11,7 @@
 #include <unistd.h>   // readlink
 #include <limits.h>   // PATH_MAX
 #include <cmath>
+#include <sstream>
 
 static void ensure_headers(const std::string& products,
                            const std::string& batches,
@@ -40,7 +41,7 @@ static DateRange compute_available_range(const std::string& batches_csv,
     bool have = false;
     Date minD{}, maxD{};
 
-    // batches.csv: batch_id,start_date,days,product_id,qty,unit,comment
+    // food_batches.csv: batch_id,start_date,days,product_id,qty,unit,comment
     if (file_exists(batches_csv)) {
         auto lines = read_lines(batches_csv);
         for (size_t i = 1; i < lines.size(); ++i) {
@@ -64,7 +65,7 @@ static DateRange compute_available_range(const std::string& batches_csv,
         }
     }
 
-    // extras.csv: date,kcal,prot,comment
+    // food_extras.csv: date,kcal,prot,comment
     if (file_exists(extras_csv)) {
         auto lines = read_lines(extras_csv);
         for (size_t i = 1; i < lines.size(); ++i) {
@@ -172,11 +173,50 @@ static std::vector<DraftItem> draft_read_items() {
     }
     return items;
 }
+static int runFoodHistoryPlot() {
+    const std::filesystem::path root = std::filesystem::path(DAILYAPP_ROOT_DIR);
+    const std::filesystem::path csv  = std::filesystem::path(FOOD_TRACKER_DATA_DIR) / "food_history.csv";
+    const std::filesystem::path out  = std::filesystem::path(FOOD_TRACKER_DATA_DIR) / "food_history.png";
+    const std::filesystem::path py   = root / "analytics" / "food_history.py"; // script global DailyApp/analytics
+
+    if (!std::filesystem::exists(py)) {
+        std::cerr << "[plot] Script not found: " << py << "\n";
+        return 127;
+    }
+
+    std::ostringstream cmd;
+    cmd << "python3 "
+        << "\"" << py.string() << "\""
+        << " --csv " << "\"" << csv.string() << "\""
+        << " --out " << "\"" << out.string() << "\"";
+
+    int rc = std::system(cmd.str().c_str());
+
+    if (rc != 0) 
+        std::cerr << "[plot] analytics failed (exit code " << rc << ")\n";
+    return rc;
+}
+
+static void usage() {
+    std::cout << "Usage:\n"
+        << "  ./food_tracker food list\n"
+        << "  ./food_tracker food add-product\n"
+        << "  ./food_tracker food sim-batch <start YYYY-MM-DD> <days> <product> <qty><unit> [comment]\n"
+        << "  ./food_tracker food add-batch <start YYYY-MM-DD> <days> <product> <qty><unit> [comment]\n"
+        << "  ./food_tracker food add-extra <date YYYY-MM-DD> <kcal> [comment]\n"
+        << "  ./food_tracker food history\n"
+        << "\nDraft (multi-items):\n"
+        << "  ./food_tracker food draft-new <start YYYY-MM-DD> <days>\n"
+        << "  ./food_tracker food draft-add <product> <qty><unit> [comment]\n"
+        << "  ./food_tracker food draft-summary\n"
+        << "  ./food_tracker food draft-commit\n"
+        << "  ./food_tracker food draft-clear\n";
+}
 
 int main(int argc, char** argv) {
-    const auto PRODUCTS = (dataDir() / "products.csv").string();
-    const auto BATCHES  = (dataDir() / "batches.csv").string();
-    const auto EXTRAS   = (dataDir() / "extras.csv").string();
+    const auto PRODUCTS = (dataDir() / "food_products.csv").string();
+    const auto BATCHES  = (dataDir() / "food_batches.csv").string();
+    const auto EXTRAS   = (dataDir() / "food_extras.csv").string();
 
 
     ensure_headers(PRODUCTS, BATCHES, EXTRAS);
@@ -184,26 +224,20 @@ int main(int argc, char** argv) {
     ProductDB db;
     db.load(PRODUCTS);
 
-    if (argc < 2) {
-    std::cout << "Usage:\n"
-            << "  ./food_tracker list\n"
-            << "  ./food_tracker add-product\n"
-            << "  ./food_tracker sim-batch <start YYYY-MM-DD> <days> <product> <qty><unit> [comment]\n"
-            << "  ./food_tracker add-batch <start YYYY-MM-DD> <days> <product> <qty><unit> [comment]\n"
-            << "  ./food_tracker add-extra <date YYYY-MM-DD> <kcal> <protg> <fiber> [comment]\n"
-            << "  ./food_tracker history\n"
+    if (argc < 2) { usage(); return 1; }
 
-            << "\nDraft (multi-items):\n"
-            << "  ./food_tracker draft-new <start YYYY-MM-DD> <days>\n"
-            << "  ./food_tracker draft-add <product> <qty><unit> [comment]\n"
-            << "  ./food_tracker draft-summary\n"
-            << "  ./food_tracker draft-commit\n"
-            << "  ./food_tracker draft-clear\n";
-    return 0;
+    std::string top = argv[1];
+    if (top == "-h" || top == "--help" || top == "help") { usage(); return 0; }
+
+    if (top != "food") {
+        std::cerr << "Commande inconnue: " << top << "\n";
+        usage();
+        return 2;
     }
 
-
-    std::string cmd = argv[1];
+    if (argc < 3) { usage(); return 1; }
+    std::string cmd = argv[2];
+    const int ARG0 = 3;
 
     if (cmd == "list") {
         auto products = db.products; // copie
@@ -234,10 +268,10 @@ int main(int argc, char** argv) {
     return 0;
     }
     if (cmd == "draft-new") {
-    if (argc < 4) { std::cerr << "draft-new <start> <days>\n"; return 1; }
+    if (argc < ARG0 + 2) { std::cerr << "draft-new <start> <days>\n"; return 1; }
     Date start{};
-    if (!parse_date_yyyy_mm_dd(argv[2], start)) { std::cerr << "Bad date\n"; return 1; }
-    int days = std::stoi(argv[3]);
+    if (!parse_date_yyyy_mm_dd(argv[ARG0], start)) { std::cerr << "Bad date\n"; return 1; }
+    int days = std::stoi(argv[ARG0 + 1]);
     if (days <= 0) { std::cerr << "days must be > 0\n"; return 1; }
 
     draft_init(start, days);
@@ -246,14 +280,14 @@ int main(int argc, char** argv) {
     }
 
     if (cmd == "add-extra") {
-        if (argc < 4) { std::cerr << "add-extra <date> <kcal> [comment]\n"; return 1; }
+        if (argc < ARG0 + 2) { std::cerr << "add-extra <date> <kcal> [comment]\n"; return 1; }
         Date d{};
-        if (!parse_date_yyyy_mm_dd(argv[2], d)) { std::cerr << "Bad date\n"; return 1; }
+        if (!parse_date_yyyy_mm_dd(argv[ARG0], d)) { std::cerr << "Bad date\n"; return 1; }
 
-        double kcal = std::stod(argv[3]);
-        std::string comment = (argc >= 5) ? join_rest_args(argc, argv, 4) : "";
+        double kcal = std::stod(argv[ARG0 + 1]);
+        std::string comment = (argc >= ARG0 + 3) ? join_rest_args(argc, argv, ARG0 + 2) : "";
 
-        // extras.csv: date,kcal,prot,fiber,comment  (prot=0 pour l’instant)
+        // food_extras.csv: date,kcal,prot,fiber,comment  (prot=0 pour l’instant)
         append_line(EXTRAS, format_date(d) + "," + std::to_string(kcal) + ",0,0," + comment);
 
         std::cout << "✔ extra ajouté\n";
@@ -262,16 +296,15 @@ int main(int argc, char** argv) {
 
     if (cmd == "draft-add") {
     if (!draft_exists()) { std::cerr << "Aucun draft. Fais: draft-new <start> <days>\n"; return 1; }
-    if (argc < 4) { std::cerr << "draft-add <product> <qty><unit> [comment]\n"; return 1; }
+    if (argc < ARG0 + 2) { std::cerr << "draft-add <product> <qty><unit> [comment]\n"; return 1; }
 
-    std::string prod_in = argv[2];
+    std::string prod_in = argv[ARG0];
     double qty=0.0; std::string unit;
-    if (!parse_qty_unit(argv[3], qty, unit)) { std::cerr << "Bad qty/unit (ex: 700g, 250mL)\n"; return 1; }
-
+    if (!parse_qty_unit(argv[ARG0 + 1], qty, unit)) { std::cerr << "Bad qty/unit (ex: 700g, 250mL)\n"; return 1; }
     auto prod = db.resolve(prod_in);
     if (!prod) { std::cerr << "Produit introuvable: " << prod_in << "\n"; return 1; }
 
-    std::string comment = (argc >= 5) ? join_rest_args(argc, argv, 4) : "";
+    std::string comment = (argc >= ARG0 + 3) ? join_rest_args(argc, argv, ARG0 + 2) : "";
     draft_add_line(prod->id, qty, unit, comment);
     std::cout << "✔ ajouté au draft: " << prod->id << " " << qty << unit << "\n";
     return 0;
@@ -326,7 +359,7 @@ int main(int argc, char** argv) {
         auto items = draft_read_items();
         if (items.empty()) { std::cerr << "Draft vide.\n"; return 1; }
 
-        // commit: append une ligne batches.csv par item
+        // commit: append une ligne food_batches.csv par item
         int k = 1;
         for (const auto& it : items) {
             // id unique : date_pid_XX
@@ -339,51 +372,55 @@ int main(int argc, char** argv) {
         }
 
         draft_clear();
-        std::cout << "✔ draft commit dans batches.csv (" << (k-1) << " items)\n";
+        std::cout << "✔ draft commit dans food_batches.csv (" << (k-1) << " items)\n";
         return 0;
     }
 
     auto do_batch = [&](bool commit) -> int {
-    if (argc < 6) {
-        std::cerr << (commit ? "add-batch" : "sim-batch")
-                << " <start> <days> <product> <qty><unit> [comment]\n";
-        return 1;
-    }
-    Date start{};
-    if (!parse_date_yyyy_mm_dd(argv[2], start)) { std::cerr << "Bad date\n"; return 1; }
-    int days = std::stoi(argv[3]);
-    std::string prod_in = argv[4];
+        if (argc < ARG0 + 4) {
+            std::cerr << (commit ? "add-batch" : "sim-batch")
+                    << " <start> <days> <product> <qty><unit> [comment]\n";
+            return 1;
+        }
 
-    double qty=0.0; std::string unit;
-    if (!parse_qty_unit(argv[5], qty, unit)) { std::cerr << "Bad qty/unit (ex: 700g, 250ml)\n"; return 1; }
+        Date start{};
+        if (!parse_date_yyyy_mm_dd(argv[ARG0], start)) { std::cerr << "Bad date\n"; return 1; }
 
-    auto prod = db.resolve(prod_in);
-    if (!prod.has_value()) {
-        std::cerr << "Produit introuvable: " << prod_in << " (utilise: food list / food add-product)\n";
-        return 1;
-    }
+        int days = std::stoi(argv[ARG0 + 1]);
+        std::string prod_in = argv[ARG0 + 2];
 
-    // kcal calc
-    double kcal_total = qty * prod->kcal_per_100 / 100.0;
-    double kcal_day = kcal_total / (double)days;
+        double qty=0.0; std::string unit;
+        if (!parse_qty_unit(argv[ARG0 + 3], qty, unit)) {
+            std::cerr << "Bad qty/unit (ex: 700g, 250mL)\n"; return 1;
+        }
 
-    std::cout << "Produit: " << prod->name << " (" << prod->id << ")\n"
+        auto prod = db.resolve(prod_in);
+        if (!prod.has_value()) {
+            std::cerr << "Produit introuvable: " << prod_in << " (utilise: food list / food add-product)\n";
+            return 1;
+        }
+
+        double kcal_total = qty * prod->kcal_per_100 / 100.0;
+        double kcal_day = kcal_total / (double)days;
+
+        std::cout << "Produit: " << prod->name << " (" << prod->id << ")\n"
                 << "Total: " << kcal_total << " kcal sur " << days << " jours -> "
                 << kcal_day << " kcal/jour\n";
 
-    if (commit) {
-        std::string batch_id = format_date(start) + "_" + prod->id;
-        std::string comment = (argc >= 7) ? argv[6] : "";
-        append_line(BATCHES,
-        batch_id + "," + format_date(start) + "," + std::to_string(days) + "," +
-        prod->id + "," + std::to_string(qty) + "," + unit + "," + comment
-        );
-        std::cout << "✔ batch enregistré\n";
-    } else {
-        std::cout << "(simulation uniquement, rien n'a été enregistré)\n";
-    }
-    return 0;
+        if (commit) {
+            std::string batch_id = format_date(start) + "_" + prod->id;
+            std::string comment = (argc >= ARG0 + 5) ? join_rest_args(argc, argv, ARG0 + 4) : "";
+            append_line(BATCHES,
+                batch_id + "," + format_date(start) + "," + std::to_string(days) + "," +
+                prod->id + "," + std::to_string(qty) + "," + unit + "," + comment
+            );
+            std::cout << "✔ batch enregistré\n";
+        } else {
+            std::cout << "(simulation uniquement, rien n'a été enregistré)\n";
+        }
+        return 0;
     };
+
     if (cmd == "draft-clear") {
     draft_clear();
     std::cout << "✔ draft supprimé\n";
@@ -398,7 +435,7 @@ int main(int argc, char** argv) {
         // 1) Determine full available range (min..max)
         auto range = compute_available_range(BATCHES, EXTRAS);
         if (!range.ok) {
-            std::cerr << "No data found in batches.csv / extras.csv.\n";
+            std::cerr << "No data found in food_batches.csv / food_extras.csv.\n";
             return 1;
         }
 
@@ -412,7 +449,7 @@ int main(int argc, char** argv) {
         auto per = compute_daily_kcal_and_prot_and_fiber(db, BATCHES, EXTRAS, range.min, days);
 
         // 3) Write/overwrite history_food.csv
-        const auto HISTORY_CSV = (dataDir() / "history_food.csv").string();
+        const auto HISTORY_CSV = (dataDir() / "food_history.csv").string();
         std::ofstream out(HISTORY_CSV, std::ios::trunc);
         if (!out) {
             std::cerr << "Cannot write: " << HISTORY_CSV << "\n";
@@ -494,25 +531,8 @@ int main(int argc, char** argv) {
         flush_group();
 
         // 5) Plot entire history from history_food.csv
-        const auto foodDir = dataDir().parent_path(); // .../food-tracker
-        const auto script  = foodDir / "analytics" / "plot_nutrition.py";
-
-        if (!std::filesystem::exists(script)) {
-            std::cerr << "⚠ plot script not found: " << script << "\n";
-            return 0;
-        }
-
-        std::string cmdp =
-            "cd \"" + foodDir.string() + "\" && "
-            "python3 \"" + script.string() + "\"";
-
-        int rc = std::system(cmdp.c_str());
-        if (rc != 0) {
-            std::cerr << "⚠ plot failed (code " << rc << "). Install deps with:\n"
-                    << "  pip install -r " << (foodDir / "analytics" / "requirements.txt") << "\n";
-        } else {
-            std::cout << "✔ plot updated: " << (dataDir() / "history_food.png") << "\n";
-        }
+        runFoodHistoryPlot();
+        std::cout << "✔ plot updated: " << (dataDir() / "food_history.png") << "\n";
 
         return 0;
     }
