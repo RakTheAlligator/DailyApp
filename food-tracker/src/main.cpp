@@ -201,8 +201,6 @@ static void usage() {
     std::cout << "Usage:\n"
         << "  ./food_tracker food list\n"
         << "  ./food_tracker food add-product\n"
-        << "  ./food_tracker food sim-batch <start YYYY-MM-DD> <days> <product> <qty><unit> [comment]\n"
-        << "  ./food_tracker food add-batch <start YYYY-MM-DD> <days> <product> <qty><unit> [comment]\n"
         << "  ./food_tracker food add-extra <date YYYY-MM-DD> <kcal> [comment]\n"
         << "  ./food_tracker food history\n"
         << "\nDraft (multi-items):\n"
@@ -211,6 +209,113 @@ static void usage() {
         << "  ./food_tracker food draft-summary\n"
         << "  ./food_tracker food draft-commit\n"
         << "  ./food_tracker food draft-clear\n";
+}
+static int rebuild_food_history_csv(ProductDB& db,
+                                    const std::string& batches,
+                                    const std::string& extras,
+                                    const std::string& out_csv)
+{
+    auto range = compute_available_range(batches, extras);
+    if (!range.ok) {
+        // pas d'erreur fatale : on peut juste vider le cache ou ne rien faire
+        // je préfère ne rien faire et informer.
+        std::cerr << "No data found in food_batches.csv / food_extras.csv.\n";
+        return 1;
+    }
+
+    int days = days_between_inclusive(range.min, range.max);
+    if (days <= 0) {
+        std::cerr << "Invalid computed date range.\n";
+        return 2;
+    }
+
+    auto per = compute_daily_kcal_and_prot_and_fiber(db, batches, extras, range.min, days);
+
+    std::ofstream out(out_csv, std::ios::trunc);
+    if (!out) {
+        std::cerr << "Cannot write: " << out_csv << "\n";
+        return 3;
+    }
+
+    out << "date,kcal,protein,fiber\n";
+    for (const auto& [date_str, kcal] : per.kcal) {
+        double prot  = per.prot[date_str];
+        double fiber = per.fiber[date_str];
+        out << date_str << "," << kcal << "," << prot << "," << fiber << "\n";
+    }
+    return 0;
+}
+static int print_grouped_history_from_csv(const std::string& csv_path) {
+    if (!file_exists(csv_path)) {
+        std::cerr << "Missing cache: " << csv_path << "\n"
+                  << "Run a write command (add-extra / draft-commit) first.\n";
+        return 1;
+    }
+
+    auto lines = read_lines(csv_path);
+    if (lines.size() < 2) {
+        std::cout << "Historique vide.\n";
+        return 0;
+    }
+
+    bool started = false;
+    std::string grp_start, grp_end;
+    double grp_kcal = 0.0, grp_prot = 0.0, grp_fiber = 0.0;
+
+    auto flush_group = [&]() {
+        if (!started) return;
+        if (same_val(grp_kcal, 0.0) && same_val(grp_prot, 0.0) && same_val(grp_fiber, 0.0)) return;
+
+        if (grp_start == grp_end) {
+            std::cout << grp_start << " : " << round2(grp_kcal)
+                      << " kcal | " << round2(grp_prot) << " g prot | " << round2(grp_fiber) << " g fiber\n";
+        } else {
+            std::cout << grp_start << " -> " << grp_end << " : " << round2(grp_kcal)
+                      << " kcal | " << round2(grp_prot) << " g prot | " << round2(grp_fiber) << " g fiber\n";
+        }
+    };
+
+    bool have_prev = false;
+    Date prev{};
+
+    for (size_t i = 1; i < lines.size(); ++i) { // skip header
+        auto c = split_csv_simple(lines[i]);
+        if (c.size() < 4) continue;
+
+        const std::string& date_str = c[0];
+        double kcal  = std::stod(c[1]);
+        double prot  = std::stod(c[2]);
+        double fiber = std::stod(c[3]);
+
+        Date cur{};
+        if (!parse_date_yyyy_mm_dd(date_str, cur)) continue;
+
+        bool consecutive = false;
+        if (have_prev) {
+            Date expected = add_days(prev, 1);
+            consecutive = (cur == expected);
+        }
+
+        if (!started) {
+            started = true;
+            grp_start = grp_end = date_str;
+            grp_kcal = kcal; grp_prot = prot; grp_fiber = fiber;
+        } else {
+            if (consecutive && same_val(kcal, grp_kcal) && same_val(prot, grp_prot) && same_val(fiber, grp_fiber)) {
+                grp_end = date_str;
+            } else {
+                flush_group();
+                grp_start = grp_end = date_str;
+                grp_kcal = kcal; grp_prot = prot; grp_fiber = fiber;
+            }
+        }
+
+        prev = cur;
+        have_prev = true;
+    }
+
+    flush_group();
+    return 0;
 }
 
 int main(int argc, char** argv) {
@@ -254,7 +359,7 @@ int main(int argc, char** argv) {
                     << std::setw(12) << ("kcal/100" + to_string(p.unit))
                     << std::setw(8)  << p.prot_per_100
                     << ("g/100" + to_string(p.unit))
-                    << std::setw(8)  << p.fiber_per_100
+                    << std::setw(12)  << p.fiber_per_100
                     << ("g/100" + to_string(p.unit))
                     << "\n";
         }
@@ -291,6 +396,9 @@ int main(int argc, char** argv) {
         append_line(EXTRAS, format_date(d) + "," + std::to_string(kcal) + ",0,0," + comment);
 
         std::cout << "✔ extra ajouté\n";
+        const auto HISTORY_CSV = (dataDir() / "food_history.csv").string();
+        rebuild_food_history_csv(db, BATCHES, EXTRAS, HISTORY_CSV);
+
         return 0;
     }
 
@@ -370,56 +478,14 @@ int main(int argc, char** argv) {
             );
             k++;
         }
+        const auto HISTORY_CSV = (dataDir() / "food_history.csv").string();
+        rebuild_food_history_csv(db, BATCHES, EXTRAS, HISTORY_CSV);
 
         draft_clear();
         std::cout << "✔ draft commit dans food_batches.csv (" << (k-1) << " items)\n";
+        
         return 0;
     }
-
-    auto do_batch = [&](bool commit) -> int {
-        if (argc < ARG0 + 4) {
-            std::cerr << (commit ? "add-batch" : "sim-batch")
-                    << " <start> <days> <product> <qty><unit> [comment]\n";
-            return 1;
-        }
-
-        Date start{};
-        if (!parse_date_yyyy_mm_dd(argv[ARG0], start)) { std::cerr << "Bad date\n"; return 1; }
-
-        int days = std::stoi(argv[ARG0 + 1]);
-        std::string prod_in = argv[ARG0 + 2];
-
-        double qty=0.0; std::string unit;
-        if (!parse_qty_unit(argv[ARG0 + 3], qty, unit)) {
-            std::cerr << "Bad qty/unit (ex: 700g, 250mL)\n"; return 1;
-        }
-
-        auto prod = db.resolve(prod_in);
-        if (!prod.has_value()) {
-            std::cerr << "Produit introuvable: " << prod_in << " (utilise: food list / food add-product)\n";
-            return 1;
-        }
-
-        double kcal_total = qty * prod->kcal_per_100 / 100.0;
-        double kcal_day = kcal_total / (double)days;
-
-        std::cout << "Produit: " << prod->name << " (" << prod->id << ")\n"
-                << "Total: " << kcal_total << " kcal sur " << days << " jours -> "
-                << kcal_day << " kcal/jour\n";
-
-        if (commit) {
-            std::string batch_id = format_date(start) + "_" + prod->id;
-            std::string comment = (argc >= ARG0 + 5) ? join_rest_args(argc, argv, ARG0 + 4) : "";
-            append_line(BATCHES,
-                batch_id + "," + format_date(start) + "," + std::to_string(days) + "," +
-                prod->id + "," + std::to_string(qty) + "," + unit + "," + comment
-            );
-            std::cout << "✔ batch enregistré\n";
-        } else {
-            std::cout << "(simulation uniquement, rien n'a été enregistré)\n";
-        }
-        return 0;
-    };
 
     if (cmd == "draft-clear") {
     draft_clear();
@@ -427,115 +493,23 @@ int main(int argc, char** argv) {
     return 0;   
     } 
 
-
-    if (cmd == "sim-batch") return do_batch(false);
-    if (cmd == "add-batch") return do_batch(true);
-
     if (cmd == "history") {
-        // 1) Determine full available range (min..max)
-        auto range = compute_available_range(BATCHES, EXTRAS);
-        if (!range.ok) {
-            std::cerr << "No data found in food_batches.csv / food_extras.csv.\n";
-            return 1;
-        }
-
-        int days = days_between_inclusive(range.min, range.max);
-        if (days <= 0) {
-            std::cerr << "Invalid computed date range.\n";
-            return 1;
-        }
-
-        // 2) Compute daily kcal/prot over whole range
-        auto per = compute_daily_kcal_and_prot_and_fiber(db, BATCHES, EXTRAS, range.min, days);
-
-        // 3) Write/overwrite history_food.csv
         const auto HISTORY_CSV = (dataDir() / "food_history.csv").string();
-        std::ofstream out(HISTORY_CSV, std::ios::trunc);
-        if (!out) {
-            std::cerr << "Cannot write: " << HISTORY_CSV << "\n";
-            return 1;
-        }
-        out << "date,kcal,protein,fiber\n";
-        // 4) Print grouped consecutive ranges with identical values
-        bool started = false;
-        std::string grp_start, grp_end;
-        double grp_kcal = 0.0, grp_prot = 0.0, grp_fiber = 0.0;
 
-        auto flush_group = [&]() {
-            if (!started) return;
+        int prc = print_grouped_history_from_csv(HISTORY_CSV);
+        if (prc != 0) return prc;
 
-            // Skip pure zero segments (after rounding)
-            if (same_val(grp_kcal, 0.0) && same_val(grp_prot, 0.0)) {
-                return;
-            }
-
-            if (grp_start == grp_end) {
-                std::cout << grp_start << " : " << round2(grp_kcal)
-                        << " kcal | " << round2(grp_prot) << " g prot | " << round2(grp_fiber) << " g fiber\n";
-            } else {
-                std::cout << grp_start << " -> " << grp_end << " : " << round2(grp_kcal)
-                        << " kcal | " << round2(grp_prot) << " g prot | " << round2(grp_fiber) << " g fiber\n";
-            }
-        };
-
-
-        bool have_prev = false;
-        Date prev{};
-        double total_kcal = 0.0, total_prot = 0.0, total_fiber = 0.0;
-
-        // per.kcal is assumed to be ordered (std::map). If not, tell me and we sort.
-        for (const auto& [date_str, kcal] : per.kcal) {
-            double prot = per.prot[date_str];
-            double fiber = per.fiber[date_str];
-            // CSV
-            out << date_str << "," << kcal << "," << prot << "," << fiber << "\n";
-
-            total_kcal += kcal;
-            total_prot += prot;
-            total_fiber += fiber;
-
-            // grouping logic
-            Date cur{};
-            if (!parse_date_yyyy_mm_dd(date_str, cur)) continue;
-
-            bool consecutive = false;
-            if (have_prev) {
-                Date expected = add_days(prev, 1);
-                consecutive = (cur == expected);
-            }
-
-            if (!started) {
-                started = true;
-                grp_start = grp_end = date_str;
-                grp_kcal = kcal;
-                grp_prot = prot;
-                grp_fiber = fiber;
-
-            } else {
-                if (consecutive && same_val(kcal, grp_kcal) && same_val(prot, grp_prot) && same_val(fiber, grp_fiber)) {
-                    grp_end = date_str;
-                } else {
-                    flush_group();
-                    grp_start = grp_end = date_str;
-                    grp_kcal = kcal;
-                    grp_prot = prot;
-                    grp_fiber = fiber;
-                }
-            }
-
-            prev = cur;
-            have_prev = true;
+        int rc = runFoodHistoryPlot();
+        if (rc != 0) {
+            // tu peux soit return rc, soit juste warn.
+            // Moi je préfère return non-zero: history doit signaler plot KO.
+            return rc;
         }
 
-        out.close();
-        flush_group();
-
-        // 5) Plot entire history from history_food.csv
-        runFoodHistoryPlot();
         std::cout << "✔ plot updated: " << (dataDir() / "food_history.png") << "\n";
-
         return 0;
     }
+
     std::cerr << "Commande inconnue.\n";
     return 1;
 }
