@@ -4,6 +4,12 @@ from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
 
+# ---- Targets (constant over time) ----
+KCAL_MIN, KCAL_MAX, KCAL_TGT = 1750, 2150, 1950
+PROT_MIN, PROT_MAX, PROT_TGT = 110, 140, 125
+FIB_MIN,  FIB_MAX,  FIB_TGT  = 25,  40,  32
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", required=True, help="Path to food_history.csv")
@@ -19,11 +25,10 @@ def main():
     df = pd.read_csv(csv_path)
     if df.empty:
         raise SystemExit("CSV is empty, nothing to plot.")
-    
+
     df["date"] = pd.to_datetime(df["date"], format="%Y-%m-%d", errors="raise")
     df = df.sort_values("date")
-    
-    # --- Support optional columns
+
     has_fiber = "fiber" in df.columns
 
     # Ensure numeric
@@ -41,57 +46,67 @@ def main():
     fig, ax1 = plt.subplots(figsize=(12, 6))
     ax2 = ax1.twinx()
 
-    # kcal: left axis
-    ax1.plot(
-        dff["date"],
-        dff["kcal"],
-        color="tab:red",
-        linewidth=2,
-        label="Energy (kcal)"
-    )
+    # ----- Axis limits (FORCED) -----
+    ax1.set_ylim(0, 2500)   # kcal
+    ax2.set_ylim(0, 150)    # protein / fiber
 
-    # protein: right axis
-    ax2.plot(
-        dff["date"],
-        dff["protein"],
-        color="tab:blue",
-        linewidth=2,
-        marker="o",
-        markersize=5,
+    # ----- Target bands (constant) -----
+    ax1.axhspan(KCAL_MIN, KCAL_MAX, color="tab:red", alpha=0.08)
+    ax2.axhspan(PROT_MIN, PROT_MAX, color="tab:blue", alpha=0.08)
+    ax2.axhspan(FIB_MIN,  FIB_MAX,  color="tab:green", alpha=0.08)
+
+    # ----- Data curves -----
+    # kcal
+    l_kcal, = ax1.plot(
+        dff["date"], dff["kcal"],
+        color="tab:red", linewidth=2, label="Energy (kcal)"
+    )
+   
+
+    # protein
+    l_prot, = ax2.plot(
+        dff["date"], dff["protein"],
+        color="tab:blue", linewidth=2, linestyle="--", marker="o",
         label="Protein (g)"
     )
 
-    # fiber: right axis (if available)
-    if has_fiber:
-        ax2.plot(
-            dff["date"],
-            dff["fiber"],
-            color="tab:green",
-            linewidth=2,
-            linestyle="--",
-            marker="s",
-            markersize=4,
-            label="Fiber (g)"
-        )
+    # fiber
+    l_fib, = ax2.plot(
+        dff["date"], dff["fiber"],
+        color="tab:green", linewidth=2, linestyle="--", marker="x",
+        label="Fiber (g)"
+    )
 
-    # Labels / styling
-    ax1.set_xlabel("Date")
-    ax1.set_ylabel("Energy (kcal)", color="tab:red")
-    ax2.set_ylabel("Protein (g) / Fiber (g)", color="tab:blue")
 
-    ax1.tick_params(axis="y", labelcolor="tab:red")
-    ax2.tick_params(axis="y", labelcolor="tab:blue")
+    # Combine legends from both axes
+    lines = [
+    l_kcal,
+    l_prot,
+    l_fib,
+    ]
 
-    # Keep identical x-range (full history)
-    ax1.set_xlim(df["date"].min(), df["date"].max())
-    ax1.grid(True, which="both", axis="both", alpha=0.4)
+    labels = [l.get_label() for l in lines]
 
-    plt.title("Food history: daily intake (zeros skipped)")
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    fig.legend(
+        lines, labels,
+        loc="lower center",
+        ncol=3,
+        frameon=False,
+        bbox_to_anchor=(0.5, -0.15)
+    )
+
+    plt.subplots_adjust(bottom=0.25)
+
+
+    plt.title("Daily intake vs targets")
+
+    plt.tight_layout(rect=[0, 0.12, 1, 1])  # laisse de la place en bas
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+
     plt.close()
 
     print(f"Wrote {out_path}")
+
 
 if __name__ == "__main__":
     main()
