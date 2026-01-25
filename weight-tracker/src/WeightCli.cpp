@@ -1,12 +1,35 @@
+#include "WeightCli.hpp"
+#include <iostream>
+#include <vector>
+#include <string>
+#include <span>
+
 #include <cctype>
 #include <filesystem>
-#include <iostream>
-#include <string>
-#include <vector>
-#include <cstdlib>  // en haut du fichier
+#include <cstdlib>
 #include <sstream>
+#include <span>
+#include <string_view>
+
 
 #include "Storage.hpp"
+
+
+
+namespace {
+
+void print_weight_help() {
+    std::cout <<
+R"(Usage:
+  ./DailyApp weight add <YYYY-MM-DD> <weight><kg|lb>
+  ./DailyApp weight remove <YYYY-MM-DD>
+  ./DailyApp weight history
+)";
+}
+
+} // namespace
+
+namespace weight {
 
 static bool isValidDateYYYYMMDD(const std::string& d) {
     if (d.size() != 10) return false;
@@ -14,7 +37,6 @@ static bool isValidDateYYYYMMDD(const std::string& d) {
     for (size_t i : {0u,1u,2u,3u,5u,6u,8u,9u}) {
         if (!std::isdigit(static_cast<unsigned char>(d[i]))) return false;
     }
-    // Validation calendrier complète pas nécessaire ici (tu peux l’ajouter plus tard)
     return true;
 }
 
@@ -22,36 +44,25 @@ static double lbToKg(double lb) { return lb / 2.20462262185; }
 static double kgToLb(double kg) { return kg * 2.20462262185; }
 
 static bool parseWeightTokenToKg(const std::string& token, double& outKg) {
-    // Accept: 62kg, 62.5kg, 143lb, 143lbs
-    // Also accept: "62" (no unit) -> reject (unit mandatory)
     std::string s = token;
-    // trim minimal
     while (!s.empty() && std::isspace((unsigned char)s.front())) s.erase(s.begin());
     while (!s.empty() && std::isspace((unsigned char)s.back())) s.pop_back();
     if (s.empty()) return false;
 
-    // Split value+unit by scanning from end where letters start
     size_t pos = s.size();
     while (pos > 0 && std::isalpha(static_cast<unsigned char>(s[pos - 1]))) pos--;
-
     if (pos == s.size()) return false; // no unit
+
     std::string valueStr = s.substr(0, pos);
     std::string unit = s.substr(pos);
-
-    // normalize unit
     for (auto& c : unit) c = static_cast<char>(std::tolower((unsigned char)c));
 
     double value = 0.0;
-    try {
-        value = std::stod(valueStr);
-    } catch (...) {
-        return false;
-    }
+    try { value = std::stod(valueStr); } catch (...) { return false; }
     if (value <= 0.0 || value >= 1000.0) return false;
 
     if (unit == "kg") { outKg = value; return true; }
     if (unit == "lb" || unit == "lbs") { outKg = lbToKg(value); return true; }
-
     return false;
 }
 
@@ -78,18 +89,24 @@ static void printHistory(const std::vector<WeightEntry>& rows) {
     }
 }
 
+static std::filesystem::path computeCsvPath() {
+    return std::filesystem::path(DAILYAPP_DATA_DIR) / "weight_history.csv";
+}
+
 static int runWeightHistoryPlot() {
     const std::filesystem::path root = std::filesystem::path(DAILYAPP_ROOT_DIR);
-    const std::filesystem::path csv  = std::filesystem::path(WEIGHT_TRACKER_DATA_DIR) / "weight_history.csv";
-    const std::filesystem::path out  = std::filesystem::path(WEIGHT_TRACKER_DATA_DIR) / "weight_history.png";
-    const std::filesystem::path py   = root / "analytics" / "weight_history.py";
+
+    const std::filesystem::path csv = computeCsvPath();
+    const std::filesystem::path out = std::filesystem::path(DAILYAPP_DATA_DIR) / "weight_history.png";
+
+    // analytics est uniquement dans /DailyApp/analytics
+    const std::filesystem::path py = root / "analytics" / "weight_history.py";
 
     if (!std::filesystem::exists(py)) {
         std::cerr << "[plot] Script not found: " << py << "\n";
         return 127;
     }
 
-    // Quotes for paths with spaces
     std::ostringstream cmd;
     cmd << "python3 "
         << "\"" << py.string() << "\""
@@ -103,49 +120,26 @@ static int runWeightHistoryPlot() {
     return rc;
 }
 
-static std::filesystem::path computeCsvPath() {
-    // WEIGHT_TRACKER_DATA_DIR = <DailyApp>/data
-    return std::filesystem::path(WEIGHT_TRACKER_DATA_DIR) / "weight_history.csv";
-}
-
-static void usage() {
-    std::cout <<
-R"(Usage:
-  ./weight_tracker weight add <YYYY-MM-DD> <weight><kg|lb>
-  ./weight_tracker weight remove <YYYY-MM-DD>
-  ./weight_tracker weight history
-)";
-}
-
-int main(int argc, char** argv) {
-    if (argc < 2) { usage(); return 1; }
-
-    const std::string top = argv[1];
-    if (top == "-h" || top == "--help" || top == "help") { usage(); return 0; }
-
-    if (top != "weight") {
-        std::cerr << "Commande inconnue: " << top << "\n";
-        usage();
-        return 2;
-    }
-
-    if (argc < 3) { usage(); return 1; }
-    const std::string cmd = argv[2];
-
-    Storage storage(computeCsvPath().string());
-
-    if (cmd == "history") {
-        printHistory(storage.loadAll());
-        runWeightHistoryPlot(); // side-effect: generate PNG
+int run(std::span<const std::string_view> args) {
+    if (args.empty() || args[0] == "--help" || args[0] == "-h") {
+        print_weight_help();
         return 0;
     }
 
+    const std::string_view cmd = args[0];
+    Storage storage(computeCsvPath().string());
+
+    if (cmd == "history") {
+        if (args.size() != 1) { print_weight_help(); return 1; }
+        printHistory(storage.loadAll());
+        (void)runWeightHistoryPlot();
+        return 0;
+    }
 
     if (cmd == "add") {
-        if (argc != 5) { usage(); return 1; }
-
-        const std::string date = argv[3];
-        const std::string wtok = argv[4];
+        if (args.size() != 3) { print_weight_help(); return 1; }
+        const std::string date(args[1]);
+        const std::string wtok(args[2]);
 
         if (!isValidDateYYYYMMDD(date)) {
             std::cerr << "Date invalide. Exemple: 2026-01-24\n";
@@ -166,9 +160,9 @@ int main(int argc, char** argv) {
     }
 
     if (cmd == "remove") {
-        if (argc != 4) { usage(); return 1; }
+        if (args.size() != 2) { print_weight_help(); return 1; }
+        const std::string date(args[1]);
 
-        const std::string date = argv[3];
         if (!isValidDateYYYYMMDD(date)) {
             std::cerr << "Date invalide. Exemple: 2026-01-24\n";
             return 2;
@@ -184,7 +178,9 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    std::cerr << "Sous-commande inconnue: " << cmd << "\n";
-    usage();
+    std::cerr << "Unknown weight command: " << cmd << "\n";
+    print_weight_help();
     return 2;
 }
+
+} // namespace weight

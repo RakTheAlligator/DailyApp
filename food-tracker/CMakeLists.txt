@@ -1,27 +1,24 @@
-cmake_minimum_required(VERSION 3.20)
-
-project(food_tracker_project LANGUAGES CXX)
-
-add_executable(food_tracker
-    src/main.cpp
+add_library(food_tracker_lib
+    src/FoodCli.cpp
     src/Csv.cpp
     src/Date.cpp
-    src/ProductDB.cpp
     src/Calculator.cpp
+    src/ProductDB.cpp
 )
 
-target_compile_features(food_tracker PRIVATE cxx_std_20)
+target_include_directories(food_tracker_lib PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
 
-target_compile_definitions(food_tracker PRIVATE
-    FOOD_TRACKER_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
+target_compile_features(food_tracker_lib PUBLIC cxx_std_20)
+
+target_compile_definitions(food_tracker_lib PUBLIC
     DAILYAPP_ROOT_DIR="${CMAKE_SOURCE_DIR}"
+    DAILYAPP_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
 )
 
-target_include_directories(food_tracker
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(food_tracker PRIVATE -Wall -Wextra -Wpedantic)
+# exe standalone optionnel (si tu gardes un src/main.cpp wrapper)
+if(DAILYAPP_BUILD_TRACKER_BINS)
+    add_executable(food_tracker src/main.cpp)
+    target_link_libraries(food_tracker PRIVATE food_tracker_lib)
 endif()
