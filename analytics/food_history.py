@@ -48,7 +48,7 @@ def main():
 
     # ----- Axis limits (FORCED) -----
     ax1.set_ylim(0, 2500)   # kcal
-    ax2.set_ylim(0, 150)    # protein / fiber
+    ax2.set_ylim(0, 170)    # protein / fiber
 
     # ----- Target bands (constant) -----
     ax1.axhspan(KCAL_MIN, KCAL_MAX, color="tab:red", alpha=0.08)
