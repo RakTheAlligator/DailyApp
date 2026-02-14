@@ -64,21 +64,24 @@ DayMacros compute_daily_kcal_and_prot_and_fiber(
   auto elines = read_lines(extras_csv);
   for (size_t i = 1; i < elines.size(); ++i) {
     auto c = split_csv_simple(elines[i]);
-    if (c.size() < 5) continue;  // date,kcal,prot,fiber,comment
+
+    // comment optionnel : 4 colonnes minimum
+    if (c.size() < 4) continue;  // date,kcal,prot,fiber,(comment)
 
     Date d{};
     if (!parse_date_yyyy_mm_dd(c[0], d)) continue;
     if (!in_range(d, start, end)) continue;
 
-    double kcal = std::stod(c[1]);
-    double prot = std::stod(c[2]);
+    double kcal  = std::stod(c[1]);
+    double prot  = std::stod(c[2]);
     double fiber = std::stod(c[3]);
 
     const auto key = format_date(d);
-    out.kcal[key] += kcal;
-    out.prot[key] += prot;
+    out.kcal[key]  += kcal;
+    out.prot[key]  += prot;
     out.fiber[key] += fiber;
   }
+
 
 
   return out;
